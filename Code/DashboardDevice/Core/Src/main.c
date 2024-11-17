@@ -371,6 +371,7 @@ void LCD_SendMessage(uint8_t msg, LCDMessageType type) {
 	i2c_msg[3] = lower_bits | 0b0000 | message_type_mask;
 
 	HAL_I2C_Master_Transmit(&hi2c1, SLAVE_LCD_ADDRESS, (uint8_t*) i2c_msg, 4, 100);
+	HAL_Delay(3); // All commands require a max of 1.64ms to respond, so this gives the PCF8574 and display some time
 }
 
 void LCD_WaitForReady() {
@@ -436,18 +437,30 @@ void LCD_SendString(char *str) {
 }
 
 void LCD_SetCursor(uint8_t row, uint8_t col) {
+	assert_param(row < 2);
+	assert_param(col < 16);
+
+	// The original datasheet doesn't entirely specify how this works, so I will!
+	// To change the position of the cursor, we need to change the address that we want to change
+	// in the DDRAM, or Display Data RAM. To do that, we use the DDRAM AD SET command as specified
+	// in the Waveshare datasheet (0b1xxxxxxx). However, this still doesn't explain how to set the actual row & col.
+	// We can figure that out from the datasheet for the LCD controller: https://www.sparkfun.com/datasheets/LCD/HD44780.pdf
+	// From pg. 11, we see that for row 1, addr is simply the row, and for row 2, we add 0x40 to the col.
+	// We can just perform a bitwise OR for this since col will only ever be 4 bits.
+	// As such, we just implement that below:
+	uint8_t ddram_addr = col;
 	switch (row) {
 		case 0: {
-			col |= 0b10000000;
 			break;
 		}
 		case 1: {
-			col |= 0b11000000;
+			ddram_addr |= 0x40;
 			break;
 		}
 	}
 
-	LCD_SendMessage(col, LCD_MESSAGE_COMMAND);
+	uint8_t msg = ddram_addr | 0b10000000;
+	LCD_SendMessage(msg, LCD_MESSAGE_COMMAND);
 }
 
 void LCD_ClearScreen() {
