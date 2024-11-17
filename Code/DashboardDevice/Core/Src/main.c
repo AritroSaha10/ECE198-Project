@@ -26,12 +26,32 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+// All the pins of the display mapped to their corresponding
+// pin number that it's connected to on the PCF8574.
+typedef enum DisplayPin {
+	DISPLAY_REGISTER_SELECT = 0,
+	DISPLAY_READ_WRITE = 1,
+	DISPLAY_ENABLE = 2,
+	DISPLAY_DB4 = 4, // DB -> Data bus line
+	DISPLAY_DB5 = 5,
+	DISPLAY_DB6 = 6,
+	DISPLAY_DB7 = 7
+} DisplayPin;
 
+DisplayPin displayPins[] = {
+	DISPLAY_REGISTER_SELECT,
+	DISPLAY_READ_WRITE,
+	DISPLAY_ENABLE,
+	DISPLAY_DB4,
+	DISPLAY_DB5,
+	DISPLAY_DB6,
+	DISPLAY_DB7
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PCF8574_ADDRESS (0x38 << 1)
+#define SLAVE_LCD_ADDRESS (0x38 << 1) // shifted 1 bit to the right since we're using 7 bit addrs
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,10 +74,16 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
-//#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
-void PCF8574_Write(uint8_t data);
-void PCF8574_SetPin(uint8_t pin);
-void PCF8574_ClearPin(uint8_t pin);
+uint8_t lcd_curr_pin_state = 0; // Current state of the pins for LCD
+
+// Directly change all pins for LCD to current value of lcd_curr_pin state,
+// essentially just sending this message directly to display via I2C and PCF8574
+void LCD_Write();
+
+// These functions will set/toggle/reset the provided display pin
+void LCD_SetPin(DisplayPin pin);
+void LCD_TogglePin(DisplayPin pin);
+void LCD_ResetPin(DisplayPin pin);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -104,12 +130,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      for (int i = 0; i < 8; ++i) {
-//    	  PCF8574_SetPin(i);
-    	  PCF8574_Write(1 << i);
+      for (int i = 0; i < sizeof(displayPins) / sizeof(displayPins[0]); ++i) {
+    	  LCD_TogglePin(displayPins[i]);
     	  HAL_Delay(5000);
-//    	  PCF8574_ClearPin(i);
-//    	  HAL_Delay(1000);
       }
 
     /* USER CODE END WHILE */
@@ -270,35 +293,28 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void PCF8574_Write(uint8_t data) {
-	HAL_I2C_Master_Transmit(&hi2c1, PCF8574_ADDRESS, &data, 1, HAL_MAX_DELAY);
+void LCD_Write() {
+	HAL_I2C_Master_Transmit(&hi2c1, SLAVE_LCD_ADDRESS, &lcd_curr_pin_state, 1, HAL_MAX_DELAY);
 }
 
-void PCF8574_SetPin(uint8_t pin) {
-	static uint8_t port_state = 0x00;
-	port_state |= (1 << pin);
-	PCF8574_Write(port_state);
+void LCD_SetPin(DisplayPin pin) {
+	uint8_t pin_num = (uint8_t) pin;
+	lcd_curr_pin_state |= (1 << pin_num);
+	LCD_Write();
 }
 
-void PCF8574_ClearPin(uint8_t pin) {
-	static uint8_t port_state = 0x00;
-	port_state &= ~(1 << pin);
-	PCF8574_Write(port_state);
+void LCD_TogglePin(DisplayPin pin) {
+	uint8_t pin_num = (uint8_t) pin;
+	lcd_curr_pin_state ^= (1 << pin_num);
+	LCD_Write();
 }
 
-/**
-  * @brief  Retargets the C library printf function to the USART.
-  *   None
-  * @retval None
-  */
-//PUTCHAR_PROTOTYPE
-//{
-//  /* Place your implementation of fputc here */
-//  /* e.g. write a character to the USART1 and Loop until the end of transmission */
-//  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
-//
-//  return ch;
-//}
+void LCD_ResetPin(DisplayPin pin) {
+	uint8_t pin_num = (uint8_t) pin;
+	lcd_curr_pin_state &= ~(1 << pin_num);
+	LCD_Write();
+}
+
 /* USER CODE END 4 */
 
 /**
