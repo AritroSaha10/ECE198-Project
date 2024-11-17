@@ -449,15 +449,7 @@ void LCD_SetCursor(uint8_t row, uint8_t col) {
 	// We can just perform a bitwise OR for this since col will only ever be 4 bits.
 	// As such, we just implement that below:
 	uint8_t ddram_addr = col;
-	switch (row) {
-		case 0: {
-			break;
-		}
-		case 1: {
-			ddram_addr |= 0x40;
-			break;
-		}
-	}
+	if (row == 1) ddram_addr |= 0x40;
 
 	uint8_t msg = ddram_addr | 0b10000000;
 	LCD_SendMessage(msg, LCD_MESSAGE_COMMAND);
