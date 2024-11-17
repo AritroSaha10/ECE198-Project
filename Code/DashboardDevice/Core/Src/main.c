@@ -21,17 +21,42 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+// All the pins of the display mapped to their corresponding
+// pin number that it's connected to on the PCF8574.
+typedef enum DisplayPin {
+	DISPLAY_REGISTER_SELECT = 0,
+	DISPLAY_READ_WRITE = 1,
+	DISPLAY_ENABLE = 2,
+	DISPLAY_DB4 = 4, // DB -> Data bus line
+	DISPLAY_DB5 = 5,
+	DISPLAY_DB6 = 6,
+	DISPLAY_DB7 = 7
+} DisplayPin;
 
+DisplayPin displayPins[] = {
+	DISPLAY_REGISTER_SELECT,
+	DISPLAY_READ_WRITE,
+	DISPLAY_ENABLE,
+	DISPLAY_DB4,
+	DISPLAY_DB5,
+	DISPLAY_DB6,
+	DISPLAY_DB7
+};
+
+typedef enum LCDMessageType {
+	LCD_MESSAGE_COMMAND,
+	LCD_MESSAGE_DATA
+} LCDMessageType;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define SLAVE_LCD_ADDRESS (0x38 << 1) // shifted 1 bit to the right since we're using 7 bit addrs
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,6 +65,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -50,8 +77,33 @@ UART_HandleTypeDef huart2;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
+uint8_t lcd_curr_pin_state = 0; // Current state of the pins for LCD
 
+// Directly change all pins for LCD to current value of lcd_curr_pin state,
+// essentially just sending this message directly to display via I2C and PCF8574
+void LCD_Write();
+
+// These functions will set/toggle/reset the provided display pin
+void LCD_SetPin(DisplayPin pin);
+void LCD_TogglePin(DisplayPin pin);
+void LCD_ResetPin(DisplayPin pin);
+
+// This function serve as slightly higher level abstraction that allow us
+// to send commands & data to the LCD
+void LCD_SendMessage(uint8_t msg, LCDMessageType type);
+
+// Initialization functions for LCD
+void LCD_WaitForReady();
+void LCD_Init();
+
+// Managing text on display
+void LCD_SendString(char *str);
+void LCD_SetCursor(uint8_t row, uint8_t col);
+void LCD_ClearScreen();
+
+//
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -89,14 +141,27 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  LCD_Init();
+
+  LCD_SetCursor(0, 0);
+  LCD_SendString("hello world");
+  LCD_SetCursor(1, 0);
+  LCD_SendString("wow");
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  uint16_t counter = 0;
   while (1)
   {
+	char str[15];
+	sprintf(str, "Count: %d", counter++);
+	LCD_SetCursor(1, 0);
+	LCD_SendString(str);
+	HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -148,6 +213,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -221,7 +320,140 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void LCD_Write() {
+	HAL_I2C_Master_Transmit(&hi2c1, SLAVE_LCD_ADDRESS, &lcd_curr_pin_state, 1, HAL_MAX_DELAY);
+}
 
+void LCD_SetPin(DisplayPin pin) {
+	uint8_t pin_num = (uint8_t) pin;
+	lcd_curr_pin_state |= (1 << pin_num);
+	LCD_Write();
+}
+
+void LCD_TogglePin(DisplayPin pin) {
+	uint8_t pin_num = (uint8_t) pin;
+	lcd_curr_pin_state ^= (1 << pin_num);
+	LCD_Write();
+}
+
+void LCD_ResetPin(DisplayPin pin) {
+	uint8_t pin_num = (uint8_t) pin;
+	lcd_curr_pin_state &= ~(1 << pin_num);
+	LCD_Write();
+}
+
+void LCD_SendMessage(uint8_t msg, LCDMessageType type) {
+	// Need to split the cmd into two, since we're in 4 bit mode
+	// and that requires us to send an 8 bit message as two 4 bit messages.
+	// Data bits are kept in first 4 bits to target the data bus lines
+	uint8_t upper_bits = msg & 0b11110000;
+	uint8_t lower_bits = (msg & 0b00001111) << 4;
+
+	// RS pin is the first pin, and controls whether we're sending a command or data
+	// If RS = 0, command, if RS = 1, data
+	uint8_t message_type_mask = type == LCD_MESSAGE_DATA ? 0b0001 : 0b0000;
+
+	// Start composing the message to send over I2C
+	uint8_t i2c_msg[4];
+
+	// Order follows as such: EN (Pin 2), RW (P1), RS (P0) (P4 isn't connected to anything)
+	// EN = 1 (LCD will actually store cmd on falling edge of EN pin, so we need to pulse it up and back down)
+	// RW = 0 (this will always be 0 since we always want to write)
+	// RS = 0 or 1 (sets to command or data mode), controlled by message_type_mask
+	i2c_msg[0] = upper_bits | 0b0100 | message_type_mask;
+
+	// Same message, but we bring EN = 0 for the falling edge.
+	// The OR mask does nothing, but is there for better readability.
+	i2c_msg[1] = upper_bits | 0b0000 | message_type_mask;
+
+	// We do the same thing as before but for the lower bits.
+	i2c_msg[2] = lower_bits | 0b0100 | message_type_mask;
+	i2c_msg[3] = lower_bits | 0b0000 | message_type_mask;
+
+	HAL_I2C_Master_Transmit(&hi2c1, SLAVE_LCD_ADDRESS, (uint8_t*) i2c_msg, 4, 100);
+}
+
+void LCD_WaitForReady() {
+	HAL_StatusTypeDef result;
+	uint32_t timeout = 60000; // ms
+	uint32_t startTime = HAL_GetTick();
+
+	// Keep checking until timeout
+	do {
+		result = HAL_I2C_IsDeviceReady(&hi2c1, SLAVE_LCD_ADDRESS, 3, 10);
+		if (result == HAL_OK) break;
+	} while ((HAL_GetTick() - startTime) < timeout);
+}
+
+void LCD_Init() {
+	LCD_WaitForReady();
+
+	// Follow the initialization sequence as set out by pg. 12 in datasheet
+	// https://www.waveshare.com/datasheet/LCD_en_PDF/LCD1602.pdf
+
+	// First, configure 4 bit data transfer
+	HAL_Delay(50); // wait >15ms
+	LCD_SendMessage(0b0011, LCD_MESSAGE_COMMAND); // Function set (interface is 8 bit length)
+
+	HAL_Delay(5); // wait >4.1ms
+	LCD_SendMessage(0b0011, LCD_MESSAGE_COMMAND); // Function set (interface is 8 bit length)
+
+	HAL_Delay(1); // wait >100us
+	LCD_SendMessage(0b0011, LCD_MESSAGE_COMMAND); // Function set (interface is 8 bit length)
+
+	HAL_Delay(10); // datasheet doesn't say anything here but just wait 10ms
+	LCD_SendMessage(0b0010, LCD_MESSAGE_COMMAND); // Set interface to 4 bit length
+
+	// Second, initialize overall display
+	LCD_SendMessage(0b00101000, LCD_MESSAGE_COMMAND); // Function set: DL=0 (4 bit mode), N=1 (2 lines), F=0 (5x8 chars)
+	HAL_Delay(1);
+
+	LCD_SendMessage(0b1000, LCD_MESSAGE_COMMAND); // On/off ctrl: Display = 0, Cursor = 0, Blink = 0
+	HAL_Delay(1);
+
+	LCD_ClearScreen();
+
+	LCD_SendMessage(0b0110, LCD_MESSAGE_COMMAND); // Entry mode: I=1 & D=1 (increment cursor), S=0 (no shift)
+	HAL_Delay(1);
+
+	LCD_SendMessage(0b1100, LCD_MESSAGE_COMMAND); // On/off ctrl: D=1, C=0, B=0 (cursor & blink, last two bits)
+
+	// Some padding time before immediately jumping to sending data
+	HAL_Delay(1000);
+}
+
+void LCD_SendString(char *str) {
+	// Send message for every character
+	uint8_t len = 0;
+	while (*str && len < 16) {
+		LCD_SendMessage(*str++, LCD_MESSAGE_DATA);
+		++len;
+	}
+
+	for (int i = len; i < 16; ++i) {
+		LCD_SendMessage(' ', LCD_MESSAGE_DATA); // Fill rest of line with spaces
+	}
+}
+
+void LCD_SetCursor(uint8_t row, uint8_t col) {
+	switch (row) {
+		case 0: {
+			col |= 0b10000000;
+			break;
+		}
+		case 1: {
+			col |= 0b11000000;
+			break;
+		}
+	}
+
+	LCD_SendMessage(col, LCD_MESSAGE_COMMAND);
+}
+
+void LCD_ClearScreen() {
+	LCD_SendMessage(0b0001, LCD_MESSAGE_COMMAND); // Clear display
+	HAL_Delay(2);
+}
 /* USER CODE END 4 */
 
 /**
