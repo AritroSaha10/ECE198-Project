@@ -47,6 +47,11 @@ DisplayPin displayPins[] = {
 	DISPLAY_DB6,
 	DISPLAY_DB7
 };
+
+typedef enum LCDMessageType {
+	LCD_MESSAGE_COMMAND,
+	LCD_MESSAGE_DATA
+} LCDMessageType;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -84,6 +89,21 @@ void LCD_Write();
 void LCD_SetPin(DisplayPin pin);
 void LCD_TogglePin(DisplayPin pin);
 void LCD_ResetPin(DisplayPin pin);
+
+// This function serve as slightly higher level abstraction that allow us
+// to send commands & data to the LCD
+void LCD_SendMessage(uint8_t msg, LCDMessageType type);
+
+// Initialization functions for LCD
+void LCD_WaitForReady();
+void LCD_Init();
+
+// Managing text on display
+void LCD_SendString(char *str);
+void LCD_SetCursor(uint8_t row, uint8_t col);
+void LCD_ClearScreen();
+
+//
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -123,18 +143,25 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  LCD_Init();
+
+  LCD_SetCursor(0, 0);
+  LCD_SendString("hello world");
+  LCD_SetCursor(1, 0);
+  LCD_SendString("wow");
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  uint16_t counter = 0;
   while (1)
   {
-      for (int i = 0; i < sizeof(displayPins) / sizeof(displayPins[0]); ++i) {
-    	  LCD_TogglePin(displayPins[i]);
-    	  HAL_Delay(5000);
-      }
-
+	char str[15];
+	sprintf(str, "Count: %d", counter++);
+	LCD_SetCursor(1, 0);
+	LCD_SendString(str);
+	HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -315,6 +342,118 @@ void LCD_ResetPin(DisplayPin pin) {
 	LCD_Write();
 }
 
+void LCD_SendMessage(uint8_t msg, LCDMessageType type) {
+	// Need to split the cmd into two, since we're in 4 bit mode
+	// and that requires us to send an 8 bit message as two 4 bit messages.
+	// Data bits are kept in first 4 bits to target the data bus lines
+	uint8_t upper_bits = msg & 0b11110000;
+	uint8_t lower_bits = (msg & 0b00001111) << 4;
+
+	// RS pin is the first pin, and controls whether we're sending a command or data
+	// If RS = 0, command, if RS = 1, data
+	uint8_t message_type_mask = type == LCD_MESSAGE_DATA ? 0b0001 : 0b0000;
+
+	// Start composing the message to send over I2C
+	uint8_t i2c_msg[4];
+
+	// Order follows as such: EN (Pin 2), RW (P1), RS (P0) (P4 isn't connected to anything)
+	// EN = 1 (LCD will actually store cmd on falling edge of EN pin, so we need to pulse it up and back down)
+	// RW = 0 (this will always be 0 since we always want to write)
+	// RS = 0 or 1 (sets to command or data mode), controlled by message_type_mask
+	i2c_msg[0] = upper_bits | 0b0100 | message_type_mask;
+
+	// Same message, but we bring EN = 0 for the falling edge.
+	// The OR mask does nothing, but is there for better readability.
+	i2c_msg[1] = upper_bits | 0b0000 | message_type_mask;
+
+	// We do the same thing as before but for the lower bits.
+	i2c_msg[2] = lower_bits | 0b0100 | message_type_mask;
+	i2c_msg[3] = lower_bits | 0b0000 | message_type_mask;
+
+	HAL_I2C_Master_Transmit(&hi2c1, SLAVE_LCD_ADDRESS, (uint8_t*) i2c_msg, 4, 100);
+}
+
+void LCD_WaitForReady() {
+	HAL_StatusTypeDef result;
+	uint32_t timeout = 60000; // ms
+	uint32_t startTime = HAL_GetTick();
+
+	// Keep checking until timeout
+	do {
+		result = HAL_I2C_IsDeviceReady(&hi2c1, SLAVE_LCD_ADDRESS, 3, 10);
+		if (result == HAL_OK) break;
+	} while ((HAL_GetTick() - startTime) < timeout);
+}
+
+void LCD_Init() {
+	LCD_WaitForReady();
+
+	// Follow the initialization sequence as set out by pg. 12 in datasheet
+	// https://www.waveshare.com/datasheet/LCD_en_PDF/LCD1602.pdf
+
+	// First, configure 4 bit data transfer
+	HAL_Delay(50); // wait >15ms
+	LCD_SendMessage(0b0011, LCD_MESSAGE_COMMAND); // Function set (interface is 8 bit length)
+
+	HAL_Delay(5); // wait >4.1ms
+	LCD_SendMessage(0b0011, LCD_MESSAGE_COMMAND); // Function set (interface is 8 bit length)
+
+	HAL_Delay(1); // wait >100us
+	LCD_SendMessage(0b0011, LCD_MESSAGE_COMMAND); // Function set (interface is 8 bit length)
+
+	HAL_Delay(10); // datasheet doesn't say anything here but just wait 10ms
+	LCD_SendMessage(0b0010, LCD_MESSAGE_COMMAND); // Set interface to 4 bit length
+
+	// Second, initialize overall display
+	LCD_SendMessage(0b00101000, LCD_MESSAGE_COMMAND); // Function set: DL=0 (4 bit mode), N=1 (2 lines), F=0 (5x8 chars)
+	HAL_Delay(1);
+
+	LCD_SendMessage(0b1000, LCD_MESSAGE_COMMAND); // On/off ctrl: Display = 0, Cursor = 0, Blink = 0
+	HAL_Delay(1);
+
+	LCD_ClearScreen();
+
+	LCD_SendMessage(0b0110, LCD_MESSAGE_COMMAND); // Entry mode: I=1 & D=1 (increment cursor), S=0 (no shift)
+	HAL_Delay(1);
+
+	LCD_SendMessage(0b1100, LCD_MESSAGE_COMMAND); // On/off ctrl: D=1, C=0, B=0 (cursor & blink, last two bits)
+
+	// Some padding time before immediately jumping to sending data
+	HAL_Delay(1000);
+}
+
+void LCD_SendString(char *str) {
+	// Send message for every character
+	uint8_t len = 0;
+	while (*str && len < 16) {
+		LCD_SendMessage(*str++, LCD_MESSAGE_DATA);
+		++len;
+	}
+
+	for (int i = len; i < 16; ++i) {
+		LCD_SendMessage(' ', LCD_MESSAGE_DATA); // Fill rest of line with spaces
+	}
+}
+
+void LCD_SetCursor(uint8_t row, uint8_t col) {
+	switch (row) {
+		case 0: {
+			col |= 0b10000000;
+			break;
+		}
+		case 1: {
+			col |= 0b11000000;
+			break;
+		}
+	}
+
+	LCD_SendMessage(col, LCD_MESSAGE_COMMAND);
+}
+
+void LCD_ClearScreen() {
+	LCD_SendMessage(0b0001, LCD_MESSAGE_COMMAND); // Clear display
+	HAL_Delay(2);
+}
 /* USER CODE END 4 */
 
 /**
