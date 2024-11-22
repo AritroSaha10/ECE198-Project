@@ -538,7 +538,7 @@ void LCD_ClearScreen() {
 static void Tone(uint32_t Frequency)
 {
     TIM2->ARR = (1000000UL / Frequency) - 1; // set PWM freq
-    TIM2->CCR1 = (TIM2->ARR >> 2); // set duty cycle to 25%
+    TIM2->CCR1 = (TIM2->ARR >> 1); // set duty cycle to 50%
 }
 
 static void noTone()
