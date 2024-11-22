@@ -69,6 +69,7 @@ I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim2;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -81,6 +82,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 uint8_t lcd_curr_pin_state = 0; // Current state of the pins for LCD
 
@@ -115,7 +117,7 @@ static void noTone();
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+uint8_t receivedDataViaUART[1];
 /* USER CODE END 0 */
 
 /**
@@ -150,6 +152,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   LCD_Init();
 //
@@ -160,24 +163,45 @@ int main(void)
 
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
+  receivedDataViaUART[0] = 0;
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   uint16_t counter = 0;
   uint32_t octaveFour[8] = {262, 294, 330, 349, 392, 440, 493, 523};
+  uint8_t prevDataViaUART = '0';
+
+  char str[15];
 
   while (1)
   {
-	char str[15];
-	sprintf(str, "Count: %d", counter++);
-	LCD_SetCursor(1, 0);
-	LCD_SendString(str);
-	Tone(octaveFour[counter % 8]);
-	HAL_Delay(200);
-	noTone();
+    // TODO: Adjust so that we send two bytes, for a 16 bit usigned int (to send turbidity val with 3 sig. digs)
+	HAL_StatusTypeDef status = HAL_UART_Receive(&huart1, receivedDataViaUART, 1, 3000);
+	if (status != HAL_OK) {
+	  sprintf(str, "ERROR!: %d", status);
+	  LCD_SetCursor(1, 0);
+	  LCD_SendString(str);
+	} else {
+		if (receivedDataViaUART[0] == '1') {
+			if (prevDataViaUART == '0') {
+				Tone(octaveFour[counter % 8]);
+				counter++;
+			}
+		} else {
+			noTone();
+		}
+
+		sprintf(str, "Count: %d", counter);
+		LCD_SetCursor(1, 0);
+		LCD_SendString(str);
+
+		prevDataViaUART = receivedDataViaUART[0];
+	}
 
     /* USER CODE END WHILE */
+
 
     /* USER CODE BEGIN 3 */
   }
@@ -319,6 +343,39 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 9600;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
 
 }
 
