@@ -63,6 +63,7 @@ const GPIOPin L293D_IN_1 = {GPIOB, GPIO_PIN_5};
 const GPIOPin L293D_IN_2 = {GPIOB, GPIO_PIN_4};
 const GPIOPin L293D_IN_3 = {GPIOA, GPIO_PIN_7};
 const GPIOPin L293D_IN_4 = {GPIOB, GPIO_PIN_6};
+const GPIOPin BLUE_PUSHBTN = {GPIOC, GPIO_PIN_13};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -128,19 +129,26 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    btnStatus = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+    btnStatus = !HAL_GPIO_ReadPin(BLUE_PUSHBTN.port, BLUE_PUSHBTN.pin);
     if (prevBtnStatus != btnStatus) {
-    	lastBtnPressTimestamp = HAL_GetTick();
+    	if (btnStatus) {
+    		Solenoids_SetState(TUBE_HOLD);
+    	} else {
+    		Solenoids_SetState(TUBE_FLOW_THROUGH);
+    	}
     }
-
-    uint16_t timeSinceLastBtnPress = (uint16_t) ((HAL_GetTick() - lastBtnPressTimestamp) / 1000);
-    if (btnStatus) {
-    	status = send_data_to_uart(25.5, timeSinceLastBtnPress);
-    } else {
-    	status = send_data_to_uart(0.5, timeSinceLastBtnPress);
-    }
-
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
+//    if (prevBtnStatus != btnStatus) {
+//    	lastBtnPressTimestamp = HAL_GetTick();
+//    }
+//
+//    uint16_t timeSinceLastBtnPress = (uint16_t) ((HAL_GetTick() - lastBtnPressTimestamp) / 1000);
+//    if (btnStatus) {
+//    	status = send_data_to_uart(25.5, timeSinceLastBtnPress);
+//    } else {
+//    	status = send_data_to_uart(0.5, timeSinceLastBtnPress);
+//    }
+//
+//    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
     prevBtnStatus = btnStatus;
     /* USER CODE END WHILE */
 
@@ -345,6 +353,7 @@ HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceLastReading)
 void Solenoids_SetState(TubeState newState) {
 	// Already at new state
 	if (currentSolenoidState == newState) return;
+	currentSolenoidState = newState;
 
 	// 1 -> open, -1 -> close
 	// 1st -> top, 2nd -> bot
