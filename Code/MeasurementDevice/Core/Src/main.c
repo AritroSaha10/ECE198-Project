@@ -130,6 +130,7 @@ int main(void)
   while (1)
   {
     btnStatus = !HAL_GPIO_ReadPin(BLUE_PUSHBTN.port, BLUE_PUSHBTN.pin);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, btnStatus);
     if (prevBtnStatus != btnStatus) {
     	if (btnStatus) {
     		Solenoids_SetState(TUBE_HOLD);
