@@ -57,6 +57,8 @@ typedef enum LCDMessageType {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define SLAVE_LCD_ADDRESS (0x38 << 1) // shifted 1 bit to the right since we're using 7 bit addrs
+#define TURBIDITY_THRESHOLD_NTU 5
+#define UART_START_BYTE 0xFF
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -109,15 +111,23 @@ void LCD_SetCursor(uint8_t row, uint8_t col);
 void LCD_ClearScreen();
 
 // Buzzer control functions
-static void Tone(uint32_t Frequency);
+static void tone(uint32_t frequency);
 static void noTone();
+uint8_t buzzerCurrentlyOn = 0;
 
-//
+// UART utility functions
+uint16_t convert_uint8_to_uint16(uint8_t uint8_arr[2]);
+void format_delta_time(uint16_t deltaSeconds);
+// I know this seems stupid (why don't we just return a char* from the prev func?),
+// but dynamic memory allocation is generally discouraged in embedded applications
+// so this avoids that
+char formatted_delta_time[4] = {0, 0, 0, 0};
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint8_t receivedDataViaUART[1];
+uint8_t receivedDataViaUART[4];
 /* USER CODE END 0 */
 
 /**
@@ -157,47 +167,122 @@ int main(void)
   LCD_Init();
 //
   LCD_SetCursor(0, 0);
-  LCD_SendString("hello world");
+  LCD_SendString("Turbidity Meter");
   LCD_SetCursor(1, 0);
-  LCD_SendString("wow");
+  LCD_SendString("Connecting...");
 
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   receivedDataViaUART[0] = 0;
+  receivedDataViaUART[1] = 0;
+  receivedDataViaUART[2] = 0;
+  receivedDataViaUART[3] = 0;
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint16_t counter = 0;
-  uint32_t octaveFour[8] = {262, 294, 330, 349, 392, 440, 493, 523};
-  uint8_t prevDataViaUART = '0';
+  uint16_t turbidityValueRaw = 0; // Value mult. by 100
+  float turbidityValueNTU = 0; // Actual value, just raw val / 100 to transfer decimal # easily
+  uint16_t timeSinceLastReading = 0;
 
-  char str[15];
+  uint8_t sendTone = 0;
+  uint32_t timeSinceLastTone = 0;
+
+  char str[16];
 
   while (1)
   {
-    // TODO: Adjust so that we send two bytes, for a 16 bit usigned int (to send turbidity val with 3 sig. digs)
-	HAL_StatusTypeDef status = HAL_UART_Receive(&huart1, receivedDataViaUART, 1, 3000);
+	uint8_t startByte = 0;
+
+	// Wait for the start byte (0xFF)
+	do {
+	    HAL_UART_Receive(&huart1, &startByte, 1, 100);
+	} while (startByte != UART_START_BYTE);
+
+	// Receive the next 4 bytes
+	HAL_StatusTypeDef status = HAL_UART_Receive(&huart1, receivedDataViaUART, 4, 500);
+
+	// Do a corruption check to ensure that the start byte isn't anywhere in our actual message
+	// This, of course, has some issues (what is the start byte is just a part of the data?)
+	// but that edge case has already been handled in the measurement device's sender code
+	uint8_t dataCorrupt = 0;
+	for (int i = 0; i < 4; ++i) {
+		if (receivedDataViaUART[i] == UART_START_BYTE) {
+			dataCorrupt = 1;
+			break;
+		}
+	}
+	if (dataCorrupt) continue;
+
+	// Show receiving status
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
+
 	if (status != HAL_OK) {
-	  sprintf(str, "ERROR!: %d", status);
+	  LCD_SetCursor(0, 0);
+	  LCD_SendString("Turbidity Meter");
+	  LCD_SetCursor(1, 0);
+	  LCD_SendString("CAN'T CONNECT!!!");
+
+	  sendTone = 0;
+	} else {
+	  // Parse a uint16_t from UART, by setting first byte to first 8 bits
+	  // and second byte to last 8 bits of uint16_t
+	  turbidityValueRaw = convert_uint8_to_uint16(receivedDataViaUART);
+	  timeSinceLastReading = convert_uint8_to_uint16(receivedDataViaUART + 2);
+	  turbidityValueNTU = turbidityValueRaw / 100.0f;
+
+	  // Get formatted version of time delta
+	  format_delta_time(timeSinceLastReading);
+
+	  // Clear out str before running string manipulations
+	  for (int i = 0; i < 16; ++i) {
+		  str[i] = 0;
+	  }
+
+	  sprintf(str, "%.1fNTU ?", turbidityValueNTU);
+	  // Find the first null char to figure out where we can start next str
+	  int startingIdx = 0;
+	  for (startingIdx = 0; str[startingIdx] != '?'; startingIdx++);
+
+	  // Append formatted_delta_time by just setting each char
+	  for (int i = startingIdx; i < 16; ++i) {
+		  str[i] = formatted_delta_time[i - startingIdx];
+	  }
+
 	  LCD_SetCursor(1, 0);
 	  LCD_SendString(str);
-	} else {
-		if (receivedDataViaUART[0] == '1') {
-			if (prevDataViaUART == '0') {
-				Tone(octaveFour[counter % 8]);
-				counter++;
-			}
-		} else {
-			noTone();
+
+	  // Alter the upper row with an alert if necessary
+	  if (turbidityValueNTU > TURBIDITY_THRESHOLD_NTU) {
+		  LCD_SetCursor(0, 0);
+		  LCD_SendString("TURBID. TOO HIGH");
+
+		  // Start the buzzer on/off if it hasn't already started
+		  if (!sendTone) {
+			  tone(2500);
+			  sendTone = 1;
+			  timeSinceLastTone = HAL_GetTick();
+		  }
+	  } else {
+		  LCD_SetCursor(0, 0);
+		  LCD_SendString("Turbidity Meter");
+
+		  noTone();
+		  sendTone = 0;
+	  }
+	}
+
+	// Stop sending a tone if we don't want to anymore
+	if (!sendTone && buzzerCurrentlyOn) {
+		noTone();
+	}
+	// Create pulsing sound when we want to send a tone
+	if (sendTone) {
+		if (HAL_GetTick() - timeSinceLastTone > 500) {
+			if (buzzerCurrentlyOn) noTone();
+			else tone(2500);
 		}
-
-		sprintf(str, "Count: %d", counter);
-		LCD_SetCursor(1, 0);
-		LCD_SendString(str);
-
-		prevDataViaUART = receivedDataViaUART[0];
 	}
 
     /* USER CODE END WHILE */
@@ -592,17 +677,45 @@ void LCD_ClearScreen() {
 
 // Buzzer functions were written with aid from the following resource:
 // https://deepbluembedded.com/stm32-buzzer-piezo-active-passive-buzzer-example-code-tone/
-static void Tone(uint32_t Frequency)
+static void tone(uint32_t freq)
 {
-    TIM2->ARR = (1000000UL / Frequency) - 1; // set PWM freq
+    TIM2->ARR = (1000000UL / freq) - 1; // set PWM freq
     TIM2->CCR1 = (TIM2->ARR >> 1); // set duty cycle to 50%
+    buzzerCurrentlyOn = 1;
 }
 
 static void noTone()
 {
     TIM2->CCR1 = 0; // set duty cycle to 0%
+    buzzerCurrentlyOn = 0;
 }
 
+uint16_t convert_uint8_to_uint16(uint8_t uint8_arr[2]) {
+	uint16_t tmp = 0;
+	tmp |= ((uint16_t)(uint8_arr[0])); // Lower byte first
+	tmp |= ((uint16_t)(uint8_arr[1]) << 8); // Higher byte second
+
+	return tmp;
+}
+
+void format_delta_time(uint16_t deltaSeconds) {
+	// 3 characters + \0
+	// 3 chars -> 2 for time, 1 for unit
+	// >99 hours is unlikely, and minutes/seconds overflow to next unit at 60
+	for (int i = 0; i < 4; ++i) {
+		// Reset char
+		formatted_delta_time[i] = '\0';
+	}
+
+	if (deltaSeconds > 3600) {
+		// No point in handling over >99 hours, because seriously?
+		sprintf(formatted_delta_time, "%dh", deltaSeconds / 3600);
+	} else if (deltaSeconds > 60) {
+		sprintf(formatted_delta_time, "%dm", deltaSeconds / 60);
+	} else {
+		sprintf(formatted_delta_time, "%ds", deltaSeconds);
+	}
+}
 /* USER CODE END 4 */
 
 /**

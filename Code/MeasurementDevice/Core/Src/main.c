@@ -31,7 +31,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+// 0xFF was chosen since given conditions of system, we will probably
+// never send this byte, and if we do, it's in an place where we can simply change it
+// to one lower and it won't mater.
+#define UART_START_BYTE 0xFF
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,12 +56,13 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx);
+HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint8_t transmissionData[1];
+uint8_t transmissionData[4];
 /* USER CODE END 0 */
 
 /**
@@ -94,6 +98,9 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   GPIO_PinState btnStatus = 0;
+  GPIO_PinState prevBtnStatus = 0;
+  HAL_StatusTypeDef status;
+  uint32_t lastBtnPressTimestamp = HAL_GetTick();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -101,9 +108,19 @@ int main(void)
   while (1)
   {
     btnStatus = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
-    transmissionData[0] = btnStatus == GPIO_PIN_SET ?
-    		'1' : '0';
-    HAL_StatusTypeDef status = HAL_UART_Transmit(&huart1, transmissionData, 1, 1000);
+    if (prevBtnStatus != btnStatus) {
+    	lastBtnPressTimestamp = HAL_GetTick();
+    }
+
+    uint16_t timeSinceLastBtnPress = (uint16_t) ((HAL_GetTick() - lastBtnPressTimestamp) / 1000);
+    if (btnStatus) {
+    	status = send_data_to_uart(25.5, timeSinceLastBtnPress);
+    } else {
+    	status = send_data_to_uart(0.5, timeSinceLastBtnPress);
+    }
+
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
+    prevBtnStatus = btnStatus;
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -260,6 +277,39 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
+	// follows little endian
+	transmissionData[startIdx + 0] = (uint8_t)(number & 0xff); // Lower byte first
+	transmissionData[startIdx + 1] = (uint8_t)((number >> 8) & 0xff); // Higher byte second
+
+	// Make sure we never include the start byte in our messages
+	if (transmissionData[startIdx + 0] == UART_START_BYTE) {
+		transmissionData[startIdx + 0] = UART_START_BYTE - 1;
+	}
+	if (transmissionData[startIdx + 1] == 0xff) {
+		transmissionData[startIdx + 1] = UART_START_BYTE - 1;
+	}
+}
+
+HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceLastReading) {
+	if ((number * 100) > 65535 || timeSinceLastReading > 65535) {
+		return HAL_ERROR; // Out of range
+	}
+
+    // Start byte for synchronization
+    uint8_t startByte = UART_START_BYTE;
+
+    // Prepare the data
+    prepare_uint16_for_uart((uint16_t)(number * 100), 0);
+    prepare_uint16_for_uart(timeSinceLastReading, 2);
+
+    // Transmit start byte followed by the data
+    HAL_UART_Transmit(&huart1, &startByte, 1, 500);
+    HAL_StatusTypeDef status = HAL_UART_Transmit(&huart1, transmissionData, 4, 500);
+
+    HAL_Delay(10); // Delay to ensure stable UART transmission
+    return status;
+}
 
 /* USER CODE END 4 */
 
