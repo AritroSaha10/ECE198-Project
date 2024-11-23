@@ -26,7 +26,19 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum TubeState {
+	TUBE_FILL_ONLY, // Water flows in from top, held at the bottom
+	TUBE_DRAIN_ONLY, // Water flows out from bottom, no inflow from top
+	TUBE_HOLD, // Water held in tube
+	TUBE_FLOW_THROUGH, // Water freely flows thru tube
+	TUBE_UNKNOWN // Initial state
+} TubeState;
 
+typedef struct GPIOPin
+{
+    GPIO_TypeDef *port;
+    uint16_t pin;
+} GPIOPin;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -47,7 +59,10 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+const GPIOPin L293D_IN_1 = {GPIOB, GPIO_PIN_5};
+const GPIOPin L293D_IN_2 = {GPIOB, GPIO_PIN_4};
+const GPIOPin L293D_IN_3 = {GPIOA, GPIO_PIN_7};
+const GPIOPin L293D_IN_4 = {GPIOB, GPIO_PIN_6};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -58,6 +73,12 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx);
 HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
+
+// Functions to control solenoid state
+TubeState currentSolenoidState = TUBE_UNKNOWN;
+void Solenoids_SetState(TubeState newState);
+void Solenoids_SetRawState(GPIOPin in1, GPIOPin in2, int state);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -257,7 +278,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|L293D_IN3_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, L293D_IN2_Pin|L293D_IN1_Pin|L293D_IN4_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -265,12 +289,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : LD2_Pin L293D_IN3_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin|L293D_IN3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : L293D_IN2_Pin L293D_IN1_Pin L293D_IN4_Pin */
+  GPIO_InitStruct.Pin = L293D_IN2_Pin|L293D_IN1_Pin|L293D_IN4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
@@ -311,6 +342,69 @@ HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceLastReading)
     return status;
 }
 
+void Solenoids_SetState(TubeState newState) {
+	// Already at new state
+	if (currentSolenoidState == newState) return;
+
+	// 1 -> open, -1 -> close
+	// 1st -> top, 2nd -> bot
+	int rawSolenoidStates[2] = {0, 0};
+	switch (newState) {
+		case TUBE_FILL_ONLY: {
+			rawSolenoidStates[0] = 1;
+			rawSolenoidStates[1] = -1;
+			break;
+		}
+		case TUBE_DRAIN_ONLY: {
+			rawSolenoidStates[0] = -1;
+			rawSolenoidStates[1] = 1;
+			break;
+		}
+		case TUBE_HOLD: {
+			rawSolenoidStates[0] = -1;
+			rawSolenoidStates[1] = -1;
+			break;
+		}
+		case TUBE_FLOW_THROUGH: {
+			rawSolenoidStates[0] = 1;
+			rawSolenoidStates[1] = 1;
+			break;
+		}
+		default: {
+			break;
+		}
+	}
+
+	// TODO: make sure that the order of l293d ins actually match what would make it open/close
+	Solenoids_SetRawState(L293D_IN_1, L293D_IN_2, rawSolenoidStates[0]);
+	Solenoids_SetRawState(L293D_IN_3, L293D_IN_4, rawSolenoidStates[1]);
+}
+
+// 1 -> open, -1 -> close
+void Solenoids_SetRawState(GPIOPin in1, GPIOPin in2, int state) {
+	int individualInPinStates[2] = {GPIO_PIN_RESET, GPIO_PIN_RESET};
+	switch (state) {
+		case 1: {
+			individualInPinStates[0] = GPIO_PIN_SET;
+			individualInPinStates[1] = GPIO_PIN_RESET;
+
+			break;
+		}
+		case -1: {
+			individualInPinStates[0] = GPIO_PIN_RESET;
+			individualInPinStates[1] = GPIO_PIN_SET;
+
+			break;
+		}
+	}
+
+	// Pulse pins for 40ms
+	HAL_GPIO_WritePin(in1.port, in1.pin, individualInPinStates[0]);
+	HAL_GPIO_WritePin(in2.port, in2.pin, individualInPinStates[1]);
+	HAL_Delay(40); // Almost all sources say >=30ms, just wait a tiny extra bit
+	HAL_GPIO_WritePin(in1.port, in1.pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(in2.port, in2.pin, GPIO_PIN_RESET);
+}
 /* USER CODE END 4 */
 
 /**
