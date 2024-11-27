@@ -130,13 +130,15 @@ int main(void)
   while (1)
   {
     btnStatus = !HAL_GPIO_ReadPin(BLUE_PUSHBTN.port, BLUE_PUSHBTN.pin);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, btnStatus);
-    if (prevBtnStatus != btnStatus) {
-    	if (btnStatus) {
+    if (prevBtnStatus != btnStatus && btnStatus) {
+    	if (currentSolenoidState == TUBE_HOLD) {
     		Solenoids_SetState(TUBE_HOLD);
     	} else {
-    		Solenoids_SetState(TUBE_FLOW_THROUGH);
+    		Solenoids_SetState(TUBE_HOLD);
     	}
+    	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 1);
+    	HAL_Delay(100);
+    	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 0);
     }
 //    if (prevBtnStatus != btnStatus) {
 //    	lastBtnPressTimestamp = HAL_GetTick();
@@ -353,7 +355,7 @@ HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceLastReading)
 
 void Solenoids_SetState(TubeState newState) {
 	// Already at new state
-	if (currentSolenoidState == newState) return;
+//	if (currentSolenoidState == newState) return;
 	currentSolenoidState = newState;
 
 	// 1 -> open, -1 -> close
@@ -411,7 +413,7 @@ void Solenoids_SetRawState(GPIOPin in1, GPIOPin in2, int state) {
 	// Pulse pins for 40ms
 	HAL_GPIO_WritePin(in1.port, in1.pin, individualInPinStates[0]);
 	HAL_GPIO_WritePin(in2.port, in2.pin, individualInPinStates[1]);
-	HAL_Delay(40); // Almost all sources say >=30ms, just wait a tiny extra bit
+	HAL_Delay(30); // Almost all sources say >=30ms, just wait a tiny extra bit
 	HAL_GPIO_WritePin(in1.port, in1.pin, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(in2.port, in2.pin, GPIO_PIN_RESET);
 }
