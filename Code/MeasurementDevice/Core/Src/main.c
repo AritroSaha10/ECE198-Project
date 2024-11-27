@@ -18,12 +18,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,11 +45,17 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 bool led_enabled = false;
+uint32_t diode_1_1;
+uint32_t diode_1_2;
+uint32_t diode_2_1;
+uint32_t diode_2_2;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,6 +63,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 #ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
@@ -65,6 +72,7 @@ static void MX_USART1_UART_Init(void);
 #endif
 
 void toggle_led();
+void read_diode();
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx);
 HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
 /* USER CODE END PFP */
@@ -95,7 +103,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  uint16_t timeSinceLastLEDToggle = 0;
+  uint32_t timeSinceLastLEDToggle = 0;
 
   /* USER CODE END Init */
 
@@ -110,38 +118,44 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   GPIO_PinState btnStatus = 0;
   GPIO_PinState prevBtnStatus = 0;
   HAL_StatusTypeDef status;
   uint32_t lastBtnPressTimestamp = HAL_GetTick();
+
+  HAL_ADC_Start(&hadc1);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    btnStatus = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
-    if (prevBtnStatus != btnStatus) {
-    	lastBtnPressTimestamp = HAL_GetTick();
-    }
-
-    uint16_t timeSinceLastBtnPress = (uint16_t) ((HAL_GetTick() - lastBtnPressTimestamp) / 1000);
-    if (btnStatus) {
-    	status = send_data_to_uart(25.5, timeSinceLastBtnPress);
-    } else {
-    	status = send_data_to_uart(0.5, timeSinceLastBtnPress);
-    }
-
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
-    prevBtnStatus = btnStatus;
+//    btnStatus = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+//    if (prevBtnStatus != btnStatus) {
+//    	lastBtnPressTimestamp = HAL_GetTick();
+//    }
+//
+//    uint16_t timeSinceLastBtnPress = (uint16_t) ((HAL_GetTick() - lastBtnPressTimestamp) / 1000);
+//    if (btnStatus) {
+//    	status = send_data_to_uart(25.5, timeSinceLastBtnPress);
+//    } else {
+//    	status = send_data_to_uart(0.5, timeSinceLastBtnPress);
+//    }
+//
+//    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
+//    prevBtnStatus = btnStatus;
 
     // LED Code
-	printf("Hello World\r\n");
-	if(HAL_GetTick() - timeSinceLastLEDToggle > 2000) {
-		timeSinceLastLEDToggle = (uint16_t) HAL_GetTick();
+	if(HAL_GetTick() - timeSinceLastLEDToggle > 1000) {
+		timeSinceLastLEDToggle = (uint32_t) HAL_GetTick();
 
 		toggle_led();
+		HAL_Delay(500);
+		read_diode();
+		printf("Diodes \n\r(1, 1): %lu \r\n(1, 2): %lu\r\n(2, 1): %lu\r\n(2, 2): %lu\r\nLED: %d	\r\n\n", diode_1_1, diode_1_2, diode_2_1, diode_2_2, led_enabled);
 	}
 
 
@@ -149,6 +163,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
   }
+HAL_ADC_Stop(&hadc1);
+
   /* USER CODE END 3 */
 }
 
@@ -195,6 +211,85 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 4;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = 3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Rank = 4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -281,10 +376,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|L293D_IN3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10|L293D_IN2_Pin|L293D_IN1_Pin|L293D_IN4_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
@@ -295,15 +390,15 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : LD2_Pin L293D_IN3_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin|L293D_IN3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10;
+  /*Configure GPIO pins : PB10 L293D_IN2_Pin L293D_IN1_Pin L293D_IN4_Pin */
+  GPIO_InitStruct.Pin = GPIO_PIN_10|L293D_IN2_Pin|L293D_IN1_Pin|L293D_IN4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -328,9 +423,24 @@ PUTCHAR_PROTOTYPE
 }
 
 void toggle_led() {
-	led_enabled = !led_enabled;
+//	led_enabled = !led_enabled;
+	led_enabled = true;
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, led_enabled);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, led_enabled);
+}
+
+void read_diode() {
+	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	diode_1_1 = HAL_ADC_GetValue(&hadc1);
+
+//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	diode_1_2 = HAL_ADC_GetValue(&hadc1);
+
+//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	diode_2_1 = HAL_ADC_GetValue(&hadc1);
+
+//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	diode_2_2 = HAL_ADC_GetValue(&hadc1);
 }
 
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
