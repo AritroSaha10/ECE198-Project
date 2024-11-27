@@ -18,7 +18,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -56,6 +58,12 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
+
 void toggle_led();
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx);
 HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
@@ -64,6 +72,10 @@ HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 uint8_t transmissionData[4];
+
+void UART_Print(const char *str) {
+  HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), HAL_MAX_DELAY);
+}
 /* USER CODE END 0 */
 
 /**
@@ -125,11 +137,13 @@ int main(void)
     prevBtnStatus = btnStatus;
 
     // LED Code
+	printf("Hello World\r\n");
 	if(HAL_GetTick() - timeSinceLastLEDToggle > 2000) {
 		timeSinceLastLEDToggle = (uint16_t) HAL_GetTick();
 
 		toggle_led();
 	}
+
 
     /* USER CODE END WHILE */
 
@@ -307,6 +321,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+PUTCHAR_PROTOTYPE
+{
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
+}
+
 void toggle_led() {
 	led_enabled = !led_enabled;
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, led_enabled);
