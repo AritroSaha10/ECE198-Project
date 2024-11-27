@@ -51,11 +51,13 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-bool led_enabled = false;
+bool led_enabled = true;
 uint32_t diode_1_1;
 uint32_t diode_1_2;
 uint32_t diode_2_1;
 uint32_t diode_2_2;
+
+uint32_t diode_average = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,7 +105,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  uint32_t timeSinceLastLEDToggle = 0;
+  uint32_t lastMeasurementTimestamp = 0;
 
   /* USER CODE END Init */
 
@@ -127,6 +129,8 @@ int main(void)
 
   HAL_ADC_Start(&hadc1);
 
+	toggle_led();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -149,14 +153,18 @@ int main(void)
 //    prevBtnStatus = btnStatus;
 
     // LED Code
-	if(HAL_GetTick() - timeSinceLastLEDToggle > 1000) {
+	uint16_t timeSinceLastMeasurement = (uint16_t) ((HAL_GetTick() - lastMeasurementTimestamp) / 1000);
+	uint
+	if(lastMeasurementTimestamp > 30) {
 		timeSinceLastLEDToggle = (uint32_t) HAL_GetTick();
 
-		toggle_led();
-		HAL_Delay(500);
 		read_diode();
-		printf("Diodes \n\r(1, 1): %lu \r\n(1, 2): %lu\r\n(2, 1): %lu\r\n(2, 2): %lu\r\nLED: %d	\r\n\n", diode_1_1, diode_1_2, diode_2_1, diode_2_2, led_enabled);
+
+//		printf("Diodes \n\r(1, 1): %lu \r\n(1, 2): %lu\r\n(2, 1): %lu\r\n(2, 2): %lu\r\nLED: %d	\r\n\n", diode_1_1, diode_1_2, diode_2_1, diode_2_2, led_enabled);
+
 	}
+
+	send_data_to_uart(ntu(diode_average), timeSinceLastBtnPress);
 
 
     /* USER CODE END WHILE */
@@ -429,18 +437,48 @@ void toggle_led() {
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, led_enabled);
 }
 
+//void read_diode() {
+//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+//	diode_1_1 = HAL_ADC_GetValue(&hadc1);
+//
+////	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+//	diode_1_2 = HAL_ADC_GetValue(&hadc1);
+//
+////	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+//	diode_2_1 = HAL_ADC_GetValue(&hadc1);
+//
+////	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+//	diode_2_2 = HAL_ADC_GetValue(&hadc1);
+//}
+
 void read_diode() {
-	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	diode_1_1 = HAL_ADC_GetValue(&hadc1);
+    uint32_t sample_sum = 0;
 
-//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	diode_1_2 = HAL_ADC_GetValue(&hadc1);
+    // Take 5 samples of the average of all photodiodes
+    for (int i = 0; i < 5; i++) {
+        // Wait for the full sequence conversion to complete
+        HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
 
-//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	diode_2_1 = HAL_ADC_GetValue(&hadc1);
+        // Retrieve the values for each channel in the sequence
+        uint32_t diode_1_1 = HAL_ADC_GetValue(&hadc1);
+        uint32_t diode_1_2 = HAL_ADC_GetValue(&hadc1);
+        uint32_t diode_2_1 = HAL_ADC_GetValue(&hadc1);
+        uint32_t diode_2_2 = HAL_ADC_GetValue(&hadc1);
 
-//	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	diode_2_2 = HAL_ADC_GetValue(&hadc1);
+        // Compute the average of the four photodiodes for this sample
+        uint32_t current_sample_average = (diode_1_1 + diode_1_2 + diode_2_1 + diode_2_2) / 4;
+
+        // Add this sample's average to the total sum
+        sample_sum += current_sample_average;
+
+        // Wait 50 ms before the next sample
+        if(i != 3) {
+			HAL_Delay(50);
+        }
+    }
+
+    // Compute the final filtered value as the average of the 4 samples
+    diode_average = sample_sum / 5;
 }
 
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
@@ -455,6 +493,14 @@ void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
 	if (transmissionData[startIdx + 1] == 0xff) {
 		transmissionData[startIdx + 1] = UART_START_BYTE - 1;
 	}
+}
+
+float ntu(uint_32 raw_value) {
+	return ((float) (-5.0f/3.0f)*(raw_value-3400));
+}
+
+void moving_average() {
+
 }
 
 HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceLastReading) {
