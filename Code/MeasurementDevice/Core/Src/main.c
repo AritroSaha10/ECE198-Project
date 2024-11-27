@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include <stdbool.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -47,7 +47,7 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+bool led_enabled = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -56,6 +56,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
+void toggle_led();
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx);
 HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
 /* USER CODE END PFP */
@@ -82,6 +83,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  uint16_t timeSinceLastLEDToggle = 0;
 
   /* USER CODE END Init */
 
@@ -121,6 +123,14 @@ int main(void)
 
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, status != HAL_OK);
     prevBtnStatus = btnStatus;
+
+    // LED Code
+	if(HAL_GetTick() - timeSinceLastLEDToggle > 2000) {
+		timeSinceLastLEDToggle = (uint16_t) HAL_GetTick();
+
+		toggle_led();
+	}
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -259,6 +269,12 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
@@ -272,11 +288,31 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PB10 */
+  GPIO_InitStruct.Pin = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PC7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+void toggle_led() {
+	led_enabled = !led_enabled;
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, led_enabled);
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, led_enabled);
+}
+
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
 	// follows little endian
 	transmissionData[startIdx + 0] = (uint8_t)(number & 0xff); // Lower byte first
