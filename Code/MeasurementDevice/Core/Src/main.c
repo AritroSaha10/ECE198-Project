@@ -74,9 +74,11 @@ static void MX_ADC1_Init(void);
 #endif
 
 void toggle_led();
-void read_diode();
+uint32_t read_diode();
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx);
 HAL_StatusTypeDef send_data_to_uart(float number, uint16_t timeSinceReading);
+float ntu(uint32_t raw_value);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -154,17 +156,15 @@ int main(void)
 
     // LED Code
 	uint16_t timeSinceLastMeasurement = (uint16_t) ((HAL_GetTick() - lastMeasurementTimestamp) / 1000);
-	uint
-	if(lastMeasurementTimestamp > 30) {
-		timeSinceLastLEDToggle = (uint32_t) HAL_GetTick();
+	if(timeSinceLastMeasurement >= 1) {
+		lastMeasurementTimestamp = HAL_GetTick();
 
-		read_diode();
-
-//		printf("Diodes \n\r(1, 1): %lu \r\n(1, 2): %lu\r\n(2, 1): %lu\r\n(2, 2): %lu\r\nLED: %d	\r\n\n", diode_1_1, diode_1_2, diode_2_1, diode_2_2, led_enabled);
-
+		diode_average = read_diode();
+		printf("Diodes \n\r(1, 1): %lu \r\n(1, 2): %lu\r\n(2, 1): %lu\r\n(2, 2): %lu\r\nAverage: %lu\r\n", diode_1_1, diode_1_2, diode_2_1, diode_2_2, diode_average);
+		printf("NTU: %lu\r\n\n", (uint32_t) (ntu(diode_average) * 100));
 	}
+	send_data_to_uart(ntu(diode_average), timeSinceLastMeasurement);
 
-	send_data_to_uart(ntu(diode_average), timeSinceLastBtnPress);
 
 
     /* USER CODE END WHILE */
@@ -451,7 +451,7 @@ void toggle_led() {
 //	diode_2_2 = HAL_ADC_GetValue(&hadc1);
 //}
 
-void read_diode() {
+uint32_t read_diode() {
     uint32_t sample_sum = 0;
 
     // Take 5 samples of the average of all photodiodes
@@ -460,10 +460,10 @@ void read_diode() {
         HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
 
         // Retrieve the values for each channel in the sequence
-        uint32_t diode_1_1 = HAL_ADC_GetValue(&hadc1);
-        uint32_t diode_1_2 = HAL_ADC_GetValue(&hadc1);
-        uint32_t diode_2_1 = HAL_ADC_GetValue(&hadc1);
-        uint32_t diode_2_2 = HAL_ADC_GetValue(&hadc1);
+        diode_1_1 = HAL_ADC_GetValue(&hadc1);
+        diode_1_2 = HAL_ADC_GetValue(&hadc1);
+        diode_2_1 = HAL_ADC_GetValue(&hadc1);
+        diode_2_2 = HAL_ADC_GetValue(&hadc1);
 
         // Compute the average of the four photodiodes for this sample
         uint32_t current_sample_average = (diode_1_1 + diode_1_2 + diode_2_1 + diode_2_2) / 4;
@@ -478,7 +478,7 @@ void read_diode() {
     }
 
     // Compute the final filtered value as the average of the 4 samples
-    diode_average = sample_sum / 5;
+    return sample_sum / 5;
 }
 
 void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
@@ -495,8 +495,13 @@ void prepare_uint16_for_uart(uint16_t number, uint8_t startIdx) {
 	}
 }
 
-float ntu(uint_32 raw_value) {
-	return ((float) (-5.0f/3.0f)*(raw_value-3400));
+float ntu(uint32_t raw_value) {
+	int32_t value1 = 3390;
+	int32_t value2 = 3370;
+	float ntu1 = 20.0f;
+
+//	printf("%ld\r\n", (int32_t)(((int32_t)raw_value)-value1));
+	return ((float) ((-ntu1/(float)(value1-value2))*(float)((int32_t)((int32_t) raw_value)-value1)));
 }
 
 void moving_average() {
